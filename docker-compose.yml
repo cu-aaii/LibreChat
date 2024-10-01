@@ -26,6 +26,24 @@ services:
       - type: bind
         source: ./.env
         target: /app/.env
+      - type: bind
+        source: ./librechat.yaml
+        target: /app/librechat.yaml
+      # - type: bind
+      #   source: ./client/public/assets/logo.svg
+      #   target: /app/client/dist/assets/logo.svg
+      - type: bind
+        source: ./client/public/assets/logo.svg
+        target: /app/client/dist/assets/logo.svg
+      - type: bind
+        source: ./client/public/assets/apple-touch-icon-180x180.png
+        target: /app/client/dist/assets/apple-touch-icon-180x180.png
+      - type: bind
+        source: ./client/public/assets/favicon-16x16.png
+        target: /app/client/dist/assets/favicon-16x16.png
+      - type: bind
+        source: ./client/public/assets/favicon-32x32.png
+        target: /app/client/dist/assets/favicon-32x32.png
       - ./images:/app/client/public/images
       - ./logs:/app/api/logs
   mongodb:
