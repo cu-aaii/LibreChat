@@ -3,19 +3,24 @@ import { useGetModelsQuery } from 'librechat-data-provider/react-query';
 import { Controller, useWatch, useForm, FormProvider } from 'react-hook-form';
 import {
   Tools,
+  SystemRoles,
   EModelEndpoint,
   isAssistantsEndpoint,
   defaultAgentFormValues,
 } from 'librechat-data-provider';
-import type { TConfig } from 'librechat-data-provider';
-import type { AgentForm, AgentPanelProps, Option } from '~/common';
-import { useCreateAgentMutation, useUpdateAgentMutation } from '~/data-provider';
-import { useSelectAgent, useLocalize } from '~/hooks';
-// import CapabilitiesForm from './CapabilitiesForm';
+import type { AgentForm, AgentPanelProps, StringOption } from '~/common';
+import {
+  useCreateAgentMutation,
+  useUpdateAgentMutation,
+  useGetAgentByIdQuery,
+} from '~/data-provider';
+import { useSelectAgent, useLocalize, useAuthContext } from '~/hooks';
+import AgentPanelSkeleton from './AgentPanelSkeleton';
 import { createProviderOption } from '~/utils';
 import { useToastContext } from '~/Providers';
 import AgentConfig from './AgentConfig';
 import AgentSelect from './AgentSelect';
+import { Button } from '~/components';
 import ModelPanel from './ModelPanel';
 import { Panel } from '~/common';
 
@@ -28,12 +33,18 @@ export default function AgentPanel({
   setCurrentAgentId,
   agentsConfig,
   endpointsConfig,
-}: AgentPanelProps & { agentsConfig?: TConfig | null }) {
-  const { onSelect: onSelectAgent } = useSelectAgent();
-  const { showToast } = useToastContext();
+}: AgentPanelProps) {
   const localize = useLocalize();
+  const { user } = useAuthContext();
+  const { showToast } = useToastContext();
+
+  const { onSelect: onSelectAgent } = useSelectAgent();
 
   const modelsQuery = useGetModelsQuery();
+  const agentQuery = useGetAgentByIdQuery(current_agent_id ?? '', {
+    enabled: !!(current_agent_id ?? ''),
+  });
+
   const models = useMemo(() => modelsQuery.data ?? {}, [modelsQuery.data]);
   const methods = useForm<AgentForm>({
     defaultValues: defaultAgentFormValues,
@@ -50,8 +61,7 @@ export default function AgentPanel({
             !isAssistantsEndpoint(key) &&
             key !== EModelEndpoint.agents &&
             key !== EModelEndpoint.chatGPTBrowser &&
-            key !== EModelEndpoint.gptPlugins &&
-            key !== EModelEndpoint.bingAI,
+            key !== EModelEndpoint.gptPlugins,
         )
         .map((provider) => createProviderOption(provider)),
     [endpointsConfig],
@@ -81,7 +91,7 @@ export default function AgentPanel({
     onSuccess: (data) => {
       setCurrentAgentId(data.id);
       showToast({
-        message: `${localize('com_assistants_create_success ')} ${
+        message: `${localize('com_assistants_create_success')} ${
           data.name ?? localize('com_ui_agent')
         }`,
       });
@@ -101,23 +111,28 @@ export default function AgentPanel({
     (data: AgentForm) => {
       const tools = data.tools ?? [];
 
-      if (data.code_interpreter) {
-        tools.push(Tools.code_interpreter);
+      if (data.execute_code === true) {
+        tools.push(Tools.execute_code);
       }
-      if (data.retrieval) {
+      if (data.file_search === true) {
         tools.push(Tools.file_search);
       }
 
       const {
         name,
-        model,
-        model_parameters,
-        provider: _provider,
         description,
         instructions,
+        model: _model,
+        model_parameters,
+        provider: _provider,
+        agent_ids,
+        end_after_tools,
+        hide_sequential_outputs,
       } = data;
 
-      const provider = typeof _provider === 'string' ? _provider : (_provider as Option).value;
+      const model = _model ?? '';
+      const provider =
+        (typeof _provider === 'string' ? _provider : (_provider as StringOption).value) ?? '';
 
       if (agent_id) {
         update.mutate({
@@ -130,9 +145,19 @@ export default function AgentPanel({
             tools,
             provider,
             model_parameters,
+            agent_ids,
+            end_after_tools,
+            hide_sequential_outputs,
           },
         });
         return;
+      }
+
+      if (!provider || !model) {
+        return showToast({
+          message: localize('com_agents_missing_provider_model'),
+          status: 'error',
+        });
       }
 
       create.mutate({
@@ -143,9 +168,12 @@ export default function AgentPanel({
         tools,
         provider,
         model_parameters,
+        agent_ids,
+        end_after_tools,
+        hide_sequential_outputs,
       });
     },
-    [agent_id, create, update],
+    [agent_id, create, update, showToast, localize],
   );
 
   const handleSelectAgent = useCallback(() => {
@@ -154,6 +182,25 @@ export default function AgentPanel({
     }
   }, [agent_id, onSelectAgent]);
 
+  const canEditAgent = useMemo(() => {
+    const canEdit =
+      agentQuery.data?.isCollaborative ?? false
+        ? true
+        : agentQuery.data?.author === user?.id || user?.role === SystemRoles.ADMIN;
+
+    return agentQuery.data?.id != null && agentQuery.data.id ? canEdit : true;
+  }, [
+    agentQuery.data?.isCollaborative,
+    agentQuery.data?.author,
+    agentQuery.data?.id,
+    user?.id,
+    user?.role,
+  ]);
+
+  if (agentQuery.isInitialLoading) {
+    return <AgentPanelSkeleton />;
+  }
+
   return (
     <FormProvider {...methods}>
       <form
@@ -161,7 +208,7 @@ export default function AgentPanel({
         className="scrollbar-gutter-stable h-auto w-full flex-shrink-0 overflow-x-hidden"
         aria-label="Agent configuration form"
       >
-        <div className="flex w-full flex-wrap">
+        <div className="mt-2 flex w-full flex-wrap gap-2">
           <Controller
             name="agent"
             control={control}
@@ -169,6 +216,7 @@ export default function AgentPanel({
               <AgentSelect
                 reset={reset}
                 value={field.value}
+                agentQuery={agentQuery}
                 setCurrentAgentId={setCurrentAgentId}
                 selectedAgentId={current_agent_id ?? null}
                 createMutation={create}
@@ -177,21 +225,38 @@ export default function AgentPanel({
           />
           {/* Select Button */}
           {agent_id && (
-            <button
-              className="btn btn-primary focus:shadow-outline mx-2 mt-1 h-[40px] rounded bg-green-500 px-4 py-2 font-semibold text-white hover:bg-green-400 focus:border-green-500 focus:outline-none focus:ring-0"
-              type="button"
+            <Button
+              variant="submit"
               disabled={!agent_id}
-              onClick={handleSelectAgent}
+              onClick={(e) => {
+                e.preventDefault();
+                handleSelectAgent();
+              }}
               aria-label="Select agent"
             >
               {localize('com_ui_select')}
-            </button>
+            </Button>
           )}
         </div>
-        {activePanel === Panel.model ? (
-          <ModelPanel setActivePanel={setActivePanel} providers={providers} models={models} />
-        ) : null}
-        {activePanel === Panel.builder ? (
+        {!canEditAgent && (
+          <div className="flex h-[30vh] w-full items-center justify-center">
+            <div className="text-center">
+              <h2 className="text-token-text-primary m-2 text-xl font-semibold">
+                {localize('com_agents_not_available')}
+              </h2>
+              <p className="text-token-text-secondary">{localize('com_agents_no_access')}</p>
+            </div>
+          </div>
+        )}
+        {canEditAgent && activePanel === Panel.model && (
+          <ModelPanel
+            setActivePanel={setActivePanel}
+            agent_id={agent_id}
+            providers={providers}
+            models={models}
+          />
+        )}
+        {canEditAgent && activePanel === Panel.builder && (
           <AgentConfig
             actions={actions}
             setAction={setAction}
@@ -200,7 +265,7 @@ export default function AgentPanel({
             endpointsConfig={endpointsConfig}
             setCurrentAgentId={setCurrentAgentId}
           />
-        ) : null}
+        )}
       </form>
     </FormProvider>
   );
