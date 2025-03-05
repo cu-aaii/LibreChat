@@ -1,13 +1,16 @@
 import {
-  ToolCallTypes,
+  Tools,
   ContentTypes,
+  ToolCallTypes,
   imageGenTools,
   isImageVisionTool,
 } from 'librechat-data-provider';
 import { memo } from 'react';
-import type { TMessageContentParts } from 'librechat-data-provider';
+import type { TMessageContentParts, TAttachment } from 'librechat-data-provider';
 import { ErrorMessage } from './MessageContent';
+import ExecuteCode from './Parts/ExecuteCode';
 import RetrievalCall from './RetrievalCall';
+import Reasoning from './Parts/Reasoning';
 import CodeAnalyze from './CodeAnalyze';
 import Container from './Container';
 import ToolCall from './ToolCall';
@@ -19,11 +22,11 @@ type PartProps = {
   part?: TMessageContentParts;
   isSubmitting: boolean;
   showCursor: boolean;
-  messageId: string;
   isCreatedByUser: boolean;
+  attachments?: TAttachment[];
 };
 
-const Part = memo(({ part, isSubmitting, showCursor, messageId, isCreatedByUser }: PartProps) => {
+const Part = memo(({ part, isSubmitting, attachments, showCursor, isCreatedByUser }: PartProps) => {
   if (!part) {
     return null;
   }
@@ -41,14 +44,15 @@ const Part = memo(({ part, isSubmitting, showCursor, messageId, isCreatedByUser 
     }
     return (
       <Container>
-        <Text
-          text={text}
-          isCreatedByUser={isCreatedByUser}
-          messageId={messageId}
-          showCursor={showCursor}
-        />
+        <Text text={text} isCreatedByUser={isCreatedByUser} showCursor={showCursor} />
       </Container>
     );
+  } else if (part.type === ContentTypes.THINK) {
+    const reasoning = typeof part.think === 'string' ? part.think : part.think.value;
+    if (typeof reasoning !== 'string') {
+      return null;
+    }
+    return <Reasoning reasoning={reasoning} />;
   } else if (part.type === ContentTypes.TOOL_CALL) {
     const toolCall = part[ContentTypes.TOOL_CALL];
 
@@ -56,14 +60,27 @@ const Part = memo(({ part, isSubmitting, showCursor, messageId, isCreatedByUser 
       return null;
     }
 
-    if ('args' in toolCall && (!toolCall.type || toolCall.type === ToolCallTypes.TOOL_CALL)) {
+    const isToolCall =
+      'args' in toolCall && (!toolCall.type || toolCall.type === ToolCallTypes.TOOL_CALL);
+    if (isToolCall && toolCall.name === Tools.execute_code) {
       return (
-        <ToolCall
-          args={toolCall.args ?? ''}
-          name={toolCall.name ?? ''}
+        <ExecuteCode
+          args={typeof toolCall.args === 'string' ? toolCall.args : ''}
           output={toolCall.output ?? ''}
           initialProgress={toolCall.progress ?? 0.1}
           isSubmitting={isSubmitting}
+          attachments={attachments}
+        />
+      );
+    } else if (isToolCall) {
+      return (
+        <ToolCall
+          args={toolCall.args ?? ''}
+          name={toolCall.name || ''}
+          output={toolCall.output ?? ''}
+          initialProgress={toolCall.progress ?? 0.1}
+          isSubmitting={isSubmitting}
+          attachments={attachments}
         />
       );
     } else if (toolCall.type === ToolCallTypes.CODE_INTERPRETER) {
@@ -99,12 +116,7 @@ const Part = memo(({ part, isSubmitting, showCursor, messageId, isCreatedByUser 
         if (isSubmitting && showCursor) {
           return (
             <Container>
-              <Text
-                text={''}
-                isCreatedByUser={isCreatedByUser}
-                messageId={messageId}
-                showCursor={showCursor}
-              />
+              <Text text={''} isCreatedByUser={isCreatedByUser} showCursor={showCursor} />
             </Container>
           );
         }

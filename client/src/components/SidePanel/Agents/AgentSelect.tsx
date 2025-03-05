@@ -1,21 +1,20 @@
 import { Plus, EarthIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
-import { useGetStartupConfig } from 'librechat-data-provider/react-query';
-import { Capabilities, defaultAgentFormValues } from 'librechat-data-provider';
+import { AgentCapabilities, defaultAgentFormValues } from 'librechat-data-provider';
+import type { UseMutationResult, QueryObserverResult } from '@tanstack/react-query';
 import type { Agent, AgentCreateParams } from 'librechat-data-provider';
-import type { UseMutationResult } from '@tanstack/react-query';
 import type { UseFormReset } from 'react-hook-form';
-import type { AgentCapabilities, AgentForm, TAgentOption } from '~/common';
+import type { TAgentCapabilities, AgentForm, TAgentOption } from '~/common';
 import { cn, createDropdownSetter, createProviderOption, processAgentOption } from '~/utils';
-import { useListAgentsQuery, useGetAgentByIdQuery } from '~/data-provider';
+import { useListAgentsQuery, useGetStartupConfig } from '~/data-provider';
 import SelectDropDown from '~/components/ui/SelectDropDown';
-// import { useFileMapContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
 
 const keys = new Set(Object.keys(defaultAgentFormValues));
 
 export default function AgentSelect({
   reset,
+  agentQuery,
   value: currentAgentValue,
   selectedAgentId = null,
   setCurrentAgentId,
@@ -24,12 +23,11 @@ export default function AgentSelect({
   reset: UseFormReset<AgentForm>;
   value?: TAgentOption;
   selectedAgentId: string | null;
+  agentQuery: QueryObserverResult<Agent>;
   setCurrentAgentId: React.Dispatch<React.SetStateAction<string | undefined>>;
   createMutation: UseMutationResult<Agent, Error, AgentCreateParams>;
 }) {
   const localize = useLocalize();
-  // TODO: file handling for agents
-  // const fileMap = useFileMapContext();
   const lastSelectedAgent = useRef<string | null>(null);
 
   const { data: startupConfig } = useGetStartupConfig();
@@ -39,13 +37,8 @@ export default function AgentSelect({
         processAgentOption({
           agent,
           instanceProjectId: startupConfig?.instanceProjectId,
-          /* fileMap */
         }),
       ),
-  });
-
-  const agentQuery = useGetAgentByIdQuery(selectedAgentId ?? '', {
-    enabled: !!(selectedAgentId ?? ''),
   });
 
   const resetAgentForm = useCallback(
@@ -61,17 +54,28 @@ export default function AgentSelect({
         icon: isGlobal ? <EarthIcon className={'icon-lg text-green-400'} /> : null,
       };
 
-      const actions: AgentCapabilities = {
-        [Capabilities.code_interpreter]: false,
-        [Capabilities.image_vision]: false,
-        [Capabilities.retrieval]: false,
+      const capabilities: TAgentCapabilities = {
+        [AgentCapabilities.execute_code]: false,
+        [AgentCapabilities.file_search]: false,
+        [AgentCapabilities.end_after_tools]: false,
+        [AgentCapabilities.hide_sequential_outputs]: false,
       };
 
-      const formValues: Partial<AgentForm & AgentCapabilities> = {
-        ...actions,
+      const agentTools: string[] = [];
+      (fullAgent.tools ?? []).forEach((tool) => {
+        if (capabilities[tool] !== undefined) {
+          capabilities[tool] = true;
+          return;
+        }
+
+        agentTools.push(tool);
+      });
+
+      const formValues: Partial<AgentForm & TAgentCapabilities> = {
+        ...capabilities,
         agent: update,
         model: update.model,
-        tools: update.tools ?? [],
+        tools: agentTools,
       };
 
       Object.entries(fullAgent).forEach(([name, value]) => {
@@ -91,7 +95,7 @@ export default function AgentSelect({
 
       reset(formValues);
     },
-    [reset],
+    [reset, startupConfig],
   );
 
   const onSelect = useCallback(
@@ -180,8 +184,8 @@ export default function AgentSelect({
         hasAgentValue ? 'text-gray-500' : '',
       )}
       className={cn(
-        'mt-1 rounded-md dark:border-gray-700 dark:bg-gray-850',
-        'z-50 flex h-[40px] w-full flex-none items-center justify-center px-4 hover:cursor-pointer hover:border-green-500 focus:border-gray-400',
+        'rounded-md dark:border-gray-700 dark:bg-gray-850',
+        'z-50 flex h-[40px] w-full flex-none items-center justify-center truncate px-4 hover:cursor-pointer hover:border-green-500 focus:border-gray-400',
       )}
       renderOption={() => (
         <span className="flex items-center gap-1.5 truncate">

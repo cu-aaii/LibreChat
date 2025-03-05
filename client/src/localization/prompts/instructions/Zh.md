@@ -71,7 +71,7 @@ Write a prompt that is mindful of the nuances in the language with respect to it
   - **english**: Search assistants by name
   - **translated**: 按名称搜索助手
 
-- **com_assistants_tools**:
+- **com_ui_tools**:
   - **english**: Tools
   - **translated**: 工具
 
@@ -1071,7 +1071,7 @@ Write a prompt that is mindful of the nuances in the language with respect to it
   - **english**: Preset
   - **translated**: 预设
 
-- **com_endpoint_preset_saved**:
+- **com_ui_saved**:
   - **english**: Saved!
   - **translated**: 保存成功！
 

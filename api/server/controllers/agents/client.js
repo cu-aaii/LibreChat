@@ -10,9 +10,14 @@
 const { Callback, createMetadataAggregator } = require('@librechat/agents');
 const {
   Constants,
+  VisionModes,
+  openAISchema,
+  ContentTypes,
   EModelEndpoint,
+  KnownEndpoints,
+  anthropicSchema,
+  isAgentsEndpoint,
   bedrockOutputParser,
-  providerEndpointMap,
   removeNullishValues,
 } = require('librechat-data-provider');
 const {
@@ -23,29 +28,41 @@ const {
 const {
   formatMessage,
   formatAgentMessages,
+  formatContentStrings,
   createContextHandlers,
 } = require('~/app/clients/prompts');
 const { encodeAndFormat } = require('~/server/services/Files/images/encode');
+const { getBufferString, HumanMessage } = require('@langchain/core/messages');
 const Tokenizer = require('~/server/services/Tokenizer');
 const { spendTokens } = require('~/models/spendTokens');
 const BaseClient = require('~/app/clients/BaseClient');
-// const { sleep } = require('~/server/utils');
 const { createRun } = require('./run');
 const { logger } = require('~/config');
 
 /** @typedef {import('@librechat/agents').MessageContentComplex} MessageContentComplex */
-
-// const providerSchemas = {
-// [EModelEndpoint.bedrock]: true,
-// };
+/** @typedef {import('@langchain/core/runnables').RunnableConfig} RunnableConfig */
 
 const providerParsers = {
+  [EModelEndpoint.openAI]: openAISchema,
+  [EModelEndpoint.azureOpenAI]: openAISchema,
+  [EModelEndpoint.anthropic]: anthropicSchema,
   [EModelEndpoint.bedrock]: bedrockOutputParser,
 };
+
+const legacyContentEndpoints = new Set([KnownEndpoints.groq, KnownEndpoints.deepseek]);
+
+const noSystemModelRegex = [/\bo1\b/gi];
+
+// const { processMemory, memoryInstructions } = require('~/server/services/Endpoints/agents/memory');
+// const { getFormattedMemories } = require('~/models/Memory');
+// const { getCurrentDateTime } = require('~/utils');
 
 class AgentClient extends BaseClient {
   constructor(options = {}) {
     super(null, options);
+    /** The current client class
+     * @type {string} */
+    this.clientName = EModelEndpoint.agents;
 
     /** @type {'discard' | 'summarize'} */
     this.contextStrategy = 'discard';
@@ -57,20 +74,34 @@ class AgentClient extends BaseClient {
     this.run;
 
     const {
-      maxContextTokens,
-      modelOptions = {},
+      agentConfigs,
       contentParts,
       collectedUsage,
+      artifactPromises,
+      maxContextTokens,
       ...clientOptions
     } = options;
 
-    this.modelOptions = modelOptions;
+    this.agentConfigs = agentConfigs;
     this.maxContextTokens = maxContextTokens;
     /** @type {MessageContentComplex[]} */
     this.contentParts = contentParts;
     /** @type {Array<UsageMetadata>} */
     this.collectedUsage = collectedUsage;
+    /** @type {ArtifactPromises} */
+    this.artifactPromises = artifactPromises;
+    /** @type {AgentClientOptions} */
     this.options = Object.assign({ endpoint: options.endpoint }, clientOptions);
+    /** @type {string} */
+    this.model = this.options.agent.model_parameters.model;
+    /** The key for the usage object's input tokens
+     * @type {string} */
+    this.inputTokensKey = 'input_tokens';
+    /** The key for the usage object's output tokens
+     * @type {string} */
+    this.outputTokensKey = 'output_tokens';
+    /** @type {UsageMetadata} */
+    this.usage;
   }
 
   /**
@@ -160,7 +191,7 @@ class AgentClient extends BaseClient {
         : {};
 
     if (parseOptions) {
-      runOptions = parseOptions(this.modelOptions);
+      runOptions = parseOptions(this.options.agent.model_parameters);
     }
 
     return removeNullishValues(
@@ -173,6 +204,7 @@ class AgentClient extends BaseClient {
           resendFiles: this.options.resendFiles,
           imageDetail: this.options.imageDetail,
           spec: this.options.spec,
+          iconURL: this.options.iconURL,
         },
         // TODO: PARSE OPTIONS BY PROVIDER, MAY CONTAIN SENSITIVE DATA
         runOptions,
@@ -180,10 +212,10 @@ class AgentClient extends BaseClient {
     );
   }
 
-  getBuildMessagesOptions(opts) {
+  getBuildMessagesOptions() {
     return {
-      instructions: opts.instructions,
-      additional_instructions: opts.additional_instructions,
+      instructions: this.options.agent.instructions,
+      additional_instructions: this.options.agent.additional_instructions,
     };
   }
 
@@ -192,6 +224,7 @@ class AgentClient extends BaseClient {
       this.options.req,
       attachments,
       this.options.agent.provider,
+      VisionModes.agents,
     );
     message.image_urls = image_urls.length ? image_urls : undefined;
     return files;
@@ -210,13 +243,32 @@ class AgentClient extends BaseClient {
     });
 
     let payload;
-    /** @type {{ role: string; name: string; content: string } | undefined} */
-    let systemMessage;
     /** @type {number | undefined} */
     let promptTokens;
 
     /** @type {string} */
-    let systemContent = `${instructions ?? ''}${additional_instructions ?? ''}`;
+    let systemContent = [instructions ?? '', additional_instructions ?? '']
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    // this.systemMessage = getCurrentDateTime();
+    // const { withKeys, withoutKeys } = await getFormattedMemories({
+    //   userId: this.options.req.user.id,
+    // });
+    // processMemory({
+    //   userId: this.options.req.user.id,
+    //   message: this.options.req.body.text,
+    //   parentMessageId,
+    //   memory: withKeys,
+    //   thread_id: this.conversationId,
+    // }).catch((error) => {
+    //   logger.error('Memory Agent failed to process memory', error);
+    // });
+
+    // this.systemMessage += '\n\n' + memoryInstructions;
+    // if (withoutKeys) {
+    //   this.systemMessage += `\n\n# Existing memory about the user:\n${withoutKeys}`;
+    // }
 
     if (this.options.attachments) {
       const attachments = await this.options.attachments;
@@ -237,7 +289,8 @@ class AgentClient extends BaseClient {
       this.options.attachments = files;
     }
 
-    if (this.message_file_map) {
+    /** Note: Bedrock uses legacy RAG API handling */
+    if (this.message_file_map && !isAgentsEndpoint(this.options.endpoint)) {
       this.contextHandlers = createContextHandlers(
         this.options.req,
         orderedMessages[orderedMessages.length - 1].text,
@@ -259,21 +312,21 @@ class AgentClient extends BaseClient {
       }
 
       /* If message has files, calculate image token cost */
-      // if (this.message_file_map && this.message_file_map[message.messageId]) {
-      //   const attachments = this.message_file_map[message.messageId];
-      //   for (const file of attachments) {
-      //     if (file.embedded) {
-      //       this.contextHandlers?.processFile(file);
-      //       continue;
-      //     }
+      if (this.message_file_map && this.message_file_map[message.messageId]) {
+        const attachments = this.message_file_map[message.messageId];
+        for (const file of attachments) {
+          if (file.embedded) {
+            this.contextHandlers?.processFile(file);
+            continue;
+          }
 
-      //     orderedMessages[i].tokenCount += this.calculateImageTokenCost({
-      //       width: file.width,
-      //       height: file.height,
-      //       detail: this.options.imageDetail ?? ImageDetail.auto,
-      //     });
-      //   }
-      // }
+          // orderedMessages[i].tokenCount += this.calculateImageTokenCost({
+          //   width: file.width,
+          //   height: file.height,
+          //   detail: this.options.imageDetail ?? ImageDetail.auto,
+          // });
+        }
+      }
 
       return formattedMessage;
     });
@@ -284,32 +337,21 @@ class AgentClient extends BaseClient {
     }
 
     if (systemContent) {
-      systemContent = `${systemContent.trim()}`;
-      systemMessage = {
-        role: 'system',
-        name: 'instructions',
-        content: systemContent,
-      };
-
-      if (this.contextStrategy) {
-        const instructionTokens = this.getTokenCountForMessage(systemMessage);
-        if (instructionTokens >= 0) {
-          const firstMessageTokens = orderedMessages[0].tokenCount ?? 0;
-          orderedMessages[0].tokenCount = firstMessageTokens + instructionTokens;
-        }
-      }
+      this.options.agent.instructions = systemContent;
     }
 
+    /** @type {Record<string, number> | undefined} */
+    let tokenCountMap;
+
     if (this.contextStrategy) {
-      ({ payload, promptTokens, messages } = await this.handleContextStrategy({
+      ({ payload, promptTokens, tokenCountMap, messages } = await this.handleContextStrategy({
         orderedMessages,
         formattedMessages,
-        /* prefer usage_metadata from final message */
-        buildTokenMap: false,
       }));
     }
 
     const result = {
+      tokenCountMap,
       prompt: payload,
       promptTokens,
       messages,
@@ -324,7 +366,6 @@ class AgentClient extends BaseClient {
 
   /** @type {sendCompletion} */
   async sendCompletion(payload, opts = {}) {
-    this.modelOptions.user = this.user;
     await this.chatCompletion({
       payload,
       onProgress: opts.onProgress,
@@ -340,18 +381,94 @@ class AgentClient extends BaseClient {
    * @param {UsageMetadata[]} [params.collectedUsage=this.collectedUsage]
    */
   async recordCollectedUsage({ model, context = 'message', collectedUsage = this.collectedUsage }) {
-    for (const usage of collectedUsage) {
-      await spendTokens(
+    if (!collectedUsage || !collectedUsage.length) {
+      return;
+    }
+    const input_tokens = collectedUsage[0]?.input_tokens || 0;
+
+    let output_tokens = 0;
+    let previousTokens = input_tokens; // Start with original input
+    for (let i = 0; i < collectedUsage.length; i++) {
+      const usage = collectedUsage[i];
+      if (i > 0) {
+        // Count new tokens generated (input_tokens minus previous accumulated tokens)
+        output_tokens += (Number(usage.input_tokens) || 0) - previousTokens;
+      }
+
+      // Add this message's output tokens
+      output_tokens += Number(usage.output_tokens) || 0;
+
+      // Update previousTokens to include this message's output
+      previousTokens += Number(usage.output_tokens) || 0;
+      spendTokens(
         {
           context,
-          model: model ?? this.modelOptions.model,
           conversationId: this.conversationId,
           user: this.user ?? this.options.req.user?.id,
           endpointTokenConfig: this.options.endpointTokenConfig,
+          model: usage.model ?? model ?? this.model ?? this.options.agent.model_parameters.model,
         },
         { promptTokens: usage.input_tokens, completionTokens: usage.output_tokens },
-      );
+      ).catch((err) => {
+        logger.error(
+          '[api/server/controllers/agents/client.js #recordCollectedUsage] Error spending tokens',
+          err,
+        );
+      });
     }
+
+    this.usage = {
+      input_tokens,
+      output_tokens,
+    };
+  }
+
+  /**
+   * Get stream usage as returned by this client's API response.
+   * @returns {UsageMetadata} The stream usage object.
+   */
+  getStreamUsage() {
+    return this.usage;
+  }
+
+  /**
+   * @param {TMessage} responseMessage
+   * @returns {number}
+   */
+  getTokenCountForResponse({ content }) {
+    return this.getTokenCountForMessage({
+      role: 'assistant',
+      content,
+    });
+  }
+
+  /**
+   * Calculates the correct token count for the current user message based on the token count map and API usage.
+   * Edge case: If the calculation results in a negative value, it returns the original estimate.
+   * If revisiting a conversation with a chat history entirely composed of token estimates,
+   * the cumulative token count going forward should become more accurate as the conversation progresses.
+   * @param {Object} params - The parameters for the calculation.
+   * @param {Record<string, number>} params.tokenCountMap - A map of message IDs to their token counts.
+   * @param {string} params.currentMessageId - The ID of the current message to calculate.
+   * @param {OpenAIUsageMetadata} params.usage - The usage object returned by the API.
+   * @returns {number} The correct token count for the current user message.
+   */
+  calculateCurrentTokenCount({ tokenCountMap, currentMessageId, usage }) {
+    const originalEstimate = tokenCountMap[currentMessageId] || 0;
+
+    if (!usage || typeof usage[this.inputTokensKey] !== 'number') {
+      return originalEstimate;
+    }
+
+    tokenCountMap[currentMessageId] = 0;
+    const totalTokensFromMap = Object.values(tokenCountMap).reduce((sum, count) => {
+      const numCount = Number(count);
+      return sum + (isNaN(numCount) ? 0 : numCount);
+    }, 0);
+    const totalInputTokens = usage[this.inputTokensKey] ?? 0;
+
+    const currentMessageTokens = totalInputTokens - totalTokensFromMap;
+    return currentMessageTokens > 0 ? currentMessageTokens : originalEstimate;
   }
 
   async chatCompletion({ payload, abortController = null }) {
@@ -462,49 +579,200 @@ class AgentClient extends BaseClient {
       //   });
       // }
 
-      const run = await createRun({
-        req: this.options.req,
-        agent: this.options.agent,
-        tools: this.options.tools,
-        toolMap: this.options.toolMap,
-        runId: this.responseMessageId,
-        modelOptions: this.modelOptions,
-        customHandlers: this.options.eventHandlers,
-      });
-
+      /** @type {Partial<RunnableConfig> & { version: 'v1' | 'v2'; run_id?: string; streamMode: string }} */
       const config = {
         configurable: {
-          provider: providerEndpointMap[this.options.agent.provider],
           thread_id: this.conversationId,
+          last_agent_index: this.agentConfigs?.size ?? 0,
+          hide_sequential_outputs: this.options.agent.hide_sequential_outputs,
         },
-        run_id: this.responseMessageId,
+        recursionLimit: this.options.req.app.locals[EModelEndpoint.agents]?.recursionLimit,
         signal: abortController.signal,
         streamMode: 'values',
         version: 'v2',
       };
 
-      if (!run) {
-        throw new Error('Failed to create run');
+      const initialMessages = formatAgentMessages(payload);
+      if (legacyContentEndpoints.has(this.options.agent.endpoint)) {
+        formatContentStrings(initialMessages);
       }
 
-      this.run = run;
+      /** @type {ReturnType<createRun>} */
+      let run;
 
-      const messages = formatAgentMessages(payload);
-      await run.processStream({ messages }, config, {
-        [Callback.TOOL_ERROR]: (graph, error, toolId) => {
-          logger.error(
-            '[api/server/controllers/agents/client.js #chatCompletion] Tool Error',
-            error,
-            toolId,
-          );
-        },
+      /**
+       *
+       * @param {Agent} agent
+       * @param {BaseMessage[]} messages
+       * @param {number} [i]
+       * @param {TMessageContentParts[]} [contentData]
+       */
+      const runAgent = async (agent, messages, i = 0, contentData = []) => {
+        config.configurable.model = agent.model_parameters.model;
+        if (i > 0) {
+          this.model = agent.model_parameters.model;
+        }
+        config.configurable.agent_id = agent.id;
+        config.configurable.name = agent.name;
+        config.configurable.agent_index = i;
+        const noSystemMessages = noSystemModelRegex.some((regex) =>
+          agent.model_parameters.model.match(regex),
+        );
+
+        const systemMessage = Object.values(agent.toolContextMap ?? {})
+          .join('\n')
+          .trim();
+
+        let systemContent = [
+          systemMessage,
+          agent.instructions ?? '',
+          i !== 0 ? agent.additional_instructions ?? '' : '',
+        ]
+          .join('\n')
+          .trim();
+
+        if (noSystemMessages === true) {
+          agent.instructions = undefined;
+          agent.additional_instructions = undefined;
+        } else {
+          agent.instructions = systemContent;
+          agent.additional_instructions = undefined;
+        }
+
+        if (noSystemMessages === true && systemContent?.length) {
+          let latestMessage = messages.pop().content;
+          if (typeof latestMessage !== 'string') {
+            latestMessage = latestMessage[0].text;
+          }
+          latestMessage = [systemContent, latestMessage].join('\n');
+          messages.push(new HumanMessage(latestMessage));
+        }
+
+        run = await createRun({
+          agent,
+          req: this.options.req,
+          runId: this.responseMessageId,
+          signal: abortController.signal,
+          customHandlers: this.options.eventHandlers,
+        });
+
+        if (!run) {
+          throw new Error('Failed to create run');
+        }
+
+        if (i === 0) {
+          this.run = run;
+        }
+
+        if (contentData.length) {
+          run.Graph.contentData = contentData;
+        }
+
+        await run.processStream({ messages }, config, {
+          keepContent: i !== 0,
+          callbacks: {
+            [Callback.TOOL_ERROR]: (graph, error, toolId) => {
+              logger.error(
+                '[api/server/controllers/agents/client.js #chatCompletion] Tool Error',
+                error,
+                toolId,
+              );
+            },
+          },
+        });
+      };
+
+      await runAgent(this.options.agent, initialMessages);
+
+      let finalContentStart = 0;
+      if (this.agentConfigs && this.agentConfigs.size > 0) {
+        let latestMessage = initialMessages.pop().content;
+        if (typeof latestMessage !== 'string') {
+          latestMessage = latestMessage[0].text;
+        }
+        let i = 1;
+        let runMessages = [];
+
+        const lastFiveMessages = initialMessages.slice(-5);
+        for (const [agentId, agent] of this.agentConfigs) {
+          if (abortController.signal.aborted === true) {
+            break;
+          }
+          const currentRun = await run;
+
+          if (
+            i === this.agentConfigs.size &&
+            config.configurable.hide_sequential_outputs === true
+          ) {
+            const content = this.contentParts.filter(
+              (part) => part.type === ContentTypes.TOOL_CALL,
+            );
+
+            this.options.res.write(
+              `event: message\ndata: ${JSON.stringify({
+                event: 'on_content_update',
+                data: {
+                  runId: this.responseMessageId,
+                  content,
+                },
+              })}\n\n`,
+            );
+          }
+          const _runMessages = currentRun.Graph.getRunMessages();
+          finalContentStart = this.contentParts.length;
+          runMessages = runMessages.concat(_runMessages);
+          const contentData = currentRun.Graph.contentData.slice();
+          const bufferString = getBufferString([new HumanMessage(latestMessage), ...runMessages]);
+          if (i === this.agentConfigs.size) {
+            logger.debug(`SEQUENTIAL AGENTS: Last buffer string:\n${bufferString}`);
+          }
+          try {
+            const contextMessages = [];
+            for (const message of lastFiveMessages) {
+              const messageType = message._getType();
+              if (
+                (!agent.tools || agent.tools.length === 0) &&
+                (messageType === 'tool' || (message.tool_calls?.length ?? 0) > 0)
+              ) {
+                continue;
+              }
+
+              contextMessages.push(message);
+            }
+            const currentMessages = [...contextMessages, new HumanMessage(bufferString)];
+            await runAgent(agent, currentMessages, i, contentData);
+          } catch (err) {
+            logger.error(
+              `[api/server/controllers/agents/client.js #chatCompletion] Error running agent ${agentId} (${i})`,
+              err,
+            );
+          }
+          i++;
+        }
+      }
+
+      if (config.configurable.hide_sequential_outputs !== true) {
+        finalContentStart = 0;
+      }
+
+      this.contentParts = this.contentParts.filter((part, index) => {
+        // Include parts that are either:
+        // 1. At or after the finalContentStart index
+        // 2. Of type tool_call
+        // 3. Have tool_call_ids property
+        return (
+          index >= finalContentStart || part.type === ContentTypes.TOOL_CALL || part.tool_call_ids
+        );
       });
-      this.recordCollectedUsage({ context: 'message' }).catch((err) => {
+
+      try {
+        await this.recordCollectedUsage({ context: 'message' });
+      } catch (err) {
         logger.error(
           '[api/server/controllers/agents/client.js #chatCompletion] Error recording collected usage',
           err,
         );
-      });
+      }
     } catch (err) {
       if (!abortController.signal.aborted) {
         logger.error(
@@ -590,8 +858,11 @@ class AgentClient extends BaseClient {
     }
   }
 
+  /** Silent method, as `recordCollectedUsage` is used instead */
+  async recordTokenUsage() {}
+
   getEncoding() {
-    return this.modelOptions.model?.includes('gpt-4o') ? 'o200k_base' : 'cl100k_base';
+    return 'o200k_base';
   }
 
   /**
