@@ -114,42 +114,7 @@ async function setupOpenId() {
       });
       logger.info(`[openidStrategy] proxy agent added: ${process.env.PROXY}`);
     }
-    const metadata = {
-      authorization_endpoint: 'https://shibidp.cit.cornell.edu/idp/profile/oidc/authorize',
-      token_endpoint: 'https://shibidp.cit.cornell.edu/idp/profile/oidc/token',
-      registration_endpoint: 'https://shibidp.cit.cornell.edu/idp/profile/oidc/register',
-      introspection_endpoint: 'https://shibidp.cit.cornell.edu/idp/profile/oauth2/introspection',
-      revocation_endpoint: 'https://shibidp.cit.cornell.edu/idp/profile/oauth2/revocation',
-      issuer: 'https://shibidp.cit.cornell.edu',
-      jwks_uri: 'https://shibidp.cit.cornell.edu/idp/profile/oidc/keyset',
-      scopes_supported: [
-        'openid',
-        'profile',
-        'email',
-        'address',
-        'phone',
-        'offline_access'
-      ],
-      response_types_supported: [
-        'code',
-        'id_token',
-        'id_token token',
-        'code id_token',
-        'code token',
-        'code id_token token'
-      ],
-      response_modes_supported: ['query', 'fragment', 'form_post'],
-      grant_types_supported: ['authorization_code', 'implicit', 'refresh_token'],
-      token_endpoint_auth_methods_supported: [
-        'client_secret_basic',
-        'client_secret_post',
-        'client_secret_jwt',
-        'private_key_jwt'
-      ]
-    };
-
-    // Create the Issuer with the provided metadata
-    const issuer = new Issuer(metadata);
+    const issuer = await Issuer.discover(process.env.OPENID_ISSUER);
     /* Supported Algorithms, openid-client v5 doesn't set it automatically as discovered from server.
       - id_token_signed_response_alg      // defaults to 'RS256'
       - request_object_signing_alg        // defaults to 'RS256'
