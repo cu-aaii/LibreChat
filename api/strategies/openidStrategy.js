@@ -174,6 +174,8 @@ async function setupOpenId() {
 
             const pathParts = requiredRoleParameterPath.split('.');
 
+            console.log("requiredRoleTokenKind : ", requiredRoleTokenKind)
+            console.log("tokenset : ", tokenset)
             console.log("PATH PARTS : ", pathParts)
             console.log("decodedToken : ", decodedToken)
             let found = true;
