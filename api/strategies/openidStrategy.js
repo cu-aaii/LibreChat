@@ -171,13 +171,7 @@ async function setupOpenId() {
             } else if (requiredRoleTokenKind === 'id') {
               decodedToken = jwtDecode(tokenset.id_token);
             }
-
             const pathParts = requiredRoleParameterPath.split('.');
-
-            console.log("requiredRoleTokenKind : ", requiredRoleTokenKind)
-            console.log("tokenset : ", tokenset)
-            console.log("PATH PARTS : ", pathParts)
-            console.log("decodedToken : ", decodedToken)
             let found = true;
             let roles = pathParts.reduce((o, key) => {
               if (o === null || o === undefined || !(key in o)) {
