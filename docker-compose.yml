@@ -43,6 +43,7 @@ services:
         source: ./client/public/assets/favicon-32x32.png
         target: /app/client/dist/assets/favicon-32x32.png
       - ./images:/app/client/public/images
+      - ./uploads:/app/uploads
       - ./logs:/app/api/logs
   mongodb:
     container_name: chat-mongodb
