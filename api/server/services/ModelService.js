@@ -1,12 +1,13 @@
 const axios = require('axios');
 const { Providers } = require('@librechat/agents');
+const { logAxiosError } = require('@librechat/api');
+const { logger } = require('@librechat/data-schemas');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { EModelEndpoint, defaultModels, CacheKeys } = require('librechat-data-provider');
-const { inputSchema, logAxiosError, extractBaseURL, processModelData } = require('~/utils');
+const { inputSchema, extractBaseURL, processModelData } = require('~/utils');
 const { OllamaClient } = require('~/app/clients/OllamaClient');
 const { isUserProvided } = require('~/server/utils');
 const getLogStores = require('~/cache/getLogStores');
-const { logger } = require('~/config');
 
 /**
  * Splits a string by commas and trims each resulting value.
@@ -166,7 +167,7 @@ const fetchOpenAIModels = async (opts, _models = []) => {
   }
 
   if (baseURL === openaiBaseURL) {
-    const regex = /(text-davinci-003|gpt-|o\d+-)/;
+    const regex = /(text-davinci-003|gpt-|o\d+)/;
     const excludeRegex = /audio|realtime/;
     models = models.filter((model) => regex.test(model) && !excludeRegex.test(model));
     const instructModels = models.filter((model) => model.includes('instruct'));
