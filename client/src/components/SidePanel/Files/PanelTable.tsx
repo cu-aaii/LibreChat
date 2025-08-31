@@ -2,6 +2,17 @@ import { useState, useCallback, useMemo } from 'react';
 import { ArrowUpLeft } from 'lucide-react';
 import { useSetRecoilState } from 'recoil';
 import {
+  Button,
+  Input,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  useToastContext,
+} from '@librechat/client';
+import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
@@ -21,18 +32,7 @@ import {
   isAssistantsEndpoint,
   type TFile,
 } from 'librechat-data-provider';
-
-import {
-  Button,
-  Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '~/components/ui';
-import { useFileMapContext, useChatContext, useToastContext } from '~/Providers';
+import { useFileMapContext, useChatContext } from '~/Providers';
 import { useLocalize, useUpdateFiles } from '~/hooks';
 import { useGetFileConfig } from '~/data-provider';
 import store from '~/store';
@@ -159,6 +159,7 @@ export default function DataTable<TData, TValue>({ columns, data }: DataTablePro
         filename: fileData.filename,
         source: fileData.source,
         size: fileData.bytes,
+        metadata: fileData.metadata,
       });
     },
     [addFile, fileMap, conversation, localize, showToast, fileConfig.endpoints],
@@ -279,7 +280,7 @@ export default function DataTable<TData, TValue>({ columns, data }: DataTablePro
           onClick={() => setShowFiles(true)}
           aria-label={localize('com_sidepanel_manage_files')}
         >
-          <ArrowUpLeft className="h-4 w-4" />
+          <ArrowUpLeft className="h-4 w-4" aria-hidden="true" />
           <span className="ml-2">{localize('com_sidepanel_manage_files')}</span>
         </Button>
 

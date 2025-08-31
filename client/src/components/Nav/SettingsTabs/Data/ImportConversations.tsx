@@ -1,9 +1,8 @@
 import { useState, useRef } from 'react';
 import { Import } from 'lucide-react';
+import { Spinner, useToastContext } from '@librechat/client';
 import type { TError } from 'librechat-data-provider';
 import { useUploadConversationsMutation } from '~/data-provider';
-import { useToastContext } from '~/Providers';
-import { Spinner } from '~/components/svg';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 
@@ -82,7 +81,7 @@ function ImportConversations() {
         onClick={handleImportClick}
         onKeyDown={handleKeyDown}
         disabled={!allowImport}
-        aria-label={localize('com_ui_import_conversation')}
+        aria-label={localize('com_ui_import')}
         className="btn btn-neutral relative"
       >
         {allowImport ? (
@@ -90,7 +89,7 @@ function ImportConversations() {
         ) : (
           <Spinner className="mr-1 w-4" />
         )}
-        <span>{localize('com_ui_import_conversation')}</span>
+        <span>{localize('com_ui_import')}</span>
       </button>
       <input
         ref={fileInputRef}

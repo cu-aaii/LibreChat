@@ -1,10 +1,16 @@
+import React, { useState } from 'react';
 import {
   useRevokeAllUserKeysMutation,
   useRevokeUserKeyMutation,
 } from 'librechat-data-provider/react-query';
-import React, { useState } from 'react';
-import { Button, Label, OGDialog, OGDialogTrigger, Spinner } from '~/components';
-import OGDialogTemplate from '~/components/ui/OGDialogTemplate';
+import {
+  OGDialogTemplate,
+  Button,
+  Label,
+  OGDialog,
+  OGDialogTrigger,
+  Spinner,
+} from '@librechat/client';
 import { useLocalize } from '~/hooks';
 
 export const RevokeKeysButton = ({
@@ -41,7 +47,7 @@ export const RevokeKeysButton = ({
 
   const dialogTitle = all
     ? localize('com_ui_revoke_keys')
-    : localize('com_ui_revoke_key_endpoint', endpoint);
+    : localize('com_ui_revoke_key_endpoint', { 0: endpoint });
 
   const dialogMessage = all
     ? localize('com_ui_revoke_keys_confirm')

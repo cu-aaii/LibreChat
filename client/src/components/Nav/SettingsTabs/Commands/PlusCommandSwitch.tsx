@@ -1,5 +1,5 @@
 import { useRecoilState } from 'recoil';
-import { Switch } from '~/components/ui';
+import { Switch } from '@librechat/client';
 import { useLocalize } from '~/hooks';
 import store from '~/store';
 
@@ -18,7 +18,6 @@ export default function PlusCommandSwitch() {
         id="plusCommand"
         checked={plusCommand}
         onCheckedChange={handleCheckedChange}
-        f
         className="ml-4"
         data-testid="plusCommand"
       />

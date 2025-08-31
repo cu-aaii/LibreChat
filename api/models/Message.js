@@ -1,6 +1,8 @@
 const { z } = require('zod');
-const Message = require('./schema/messageSchema');
-const { logger } = require('~/config');
+const { logger } = require('@librechat/data-schemas');
+const { createTempChatExpirationDate } = require('@librechat/api');
+const { getCustomConfig } = require('~/server/services/Config/getCustomConfig');
+const { Message } = require('~/db/models');
 
 const idSchema = z.string().uuid();
 
@@ -52,6 +54,27 @@ async function saveMessage(req, params, metadata) {
       user: req.user.id,
       messageId: params.newMessageId || params.messageId,
     };
+
+    if (req?.body?.isTemporary) {
+      try {
+        const customConfig = await getCustomConfig();
+        update.expiredAt = createTempChatExpirationDate(customConfig);
+      } catch (err) {
+        logger.error('Error creating temporary chat expiration date:', err);
+        logger.info(`---\`saveMessage\` context: ${metadata?.context}`);
+        update.expiredAt = null;
+      }
+    } else {
+      update.expiredAt = null;
+    }
+
+    if (update.tokenCount != null && isNaN(update.tokenCount)) {
+      logger.warn(
+        `Resetting invalid \`tokenCount\` for message \`${params.messageId}\`: ${update.tokenCount}`,
+      );
+      logger.info(`---\`saveMessage\` context: ${metadata?.context}`);
+      update.tokenCount = 0;
+    }
     const message = await Message.findOneAndUpdate(
       { messageId: params.messageId, user: req.user.id },
       update,
@@ -62,7 +85,44 @@ async function saveMessage(req, params, metadata) {
   } catch (err) {
     logger.error('Error saving message:', err);
     logger.info(`---\`saveMessage\` context: ${metadata?.context}`);
-    throw err;
+
+    // Check if this is a duplicate key error (MongoDB error code 11000)
+    if (err.code === 11000 && err.message.includes('duplicate key error')) {
+      // Log the duplicate key error but don't crash the application
+      logger.warn(`Duplicate messageId detected: ${params.messageId}. Continuing execution.`);
+
+      try {
+        // Try to find the existing message with this ID
+        const existingMessage = await Message.findOne({
+          messageId: params.messageId,
+          user: req.user.id,
+        });
+
+        // If we found it, return it
+        if (existingMessage) {
+          return existingMessage.toObject();
+        }
+
+        // If we can't find it (unlikely but possible in race conditions)
+        return {
+          ...params,
+          messageId: params.messageId,
+          user: req.user.id,
+        };
+      } catch (findError) {
+        // If the findOne also fails, log it but don't crash
+        logger.warn(
+          `Could not retrieve existing message with ID ${params.messageId}: ${findError.message}`,
+        );
+        return {
+          ...params,
+          messageId: params.messageId,
+          user: req.user.id,
+        };
+      }
+    }
+
+    throw err; // Re-throw other errors
   }
 }
 
@@ -86,7 +146,6 @@ async function bulkSaveMessages(messages, overrideTimestamp = false) {
         upsert: true,
       },
     }));
-
     const result = await Message.bulkWrite(bulkOps);
     return result;
   } catch (err) {
@@ -201,6 +260,7 @@ async function updateMessage(req, message, metadata) {
       text: updatedMessage.text,
       isCreatedByUser: updatedMessage.isCreatedByUser,
       tokenCount: updatedMessage.tokenCount,
+      feedback: updatedMessage.feedback,
     };
   } catch (err) {
     logger.error('Error updating message:', err);
@@ -301,7 +361,6 @@ async function deleteMessages(filter) {
 }
 
 module.exports = {
-  Message,
   saveMessage,
   bulkSaveMessages,
   recordMessage,

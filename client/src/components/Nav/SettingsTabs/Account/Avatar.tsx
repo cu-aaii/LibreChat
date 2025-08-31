@@ -3,7 +3,6 @@ import { useSetRecoilState } from 'recoil';
 import AvatarEditor from 'react-avatar-editor';
 import { FileImage, RotateCw, Upload } from 'lucide-react';
 import { fileConfig as defaultFileConfig, mergeFileConfig } from 'librechat-data-provider';
-import type { TUser } from 'librechat-data-provider';
 import {
   Slider,
   Button,
@@ -13,9 +12,10 @@ import {
   OGDialogHeader,
   OGDialogTitle,
   OGDialogTrigger,
-} from '~/components';
+  useToastContext,
+} from '@librechat/client';
+import type { TUser } from 'librechat-data-provider';
 import { useUploadAvatarMutation, useGetFileConfig } from '~/data-provider';
-import { useToastContext } from '~/Providers';
 import { cn, formatBytes } from '~/utils';
 import { useLocalize } from '~/hooks';
 import store from '~/store';
@@ -47,7 +47,7 @@ function Avatar() {
   const { mutate: uploadAvatar, isLoading: isUploading } = useUploadAvatarMutation({
     onSuccess: (data) => {
       showToast({ message: localize('com_ui_upload_success') });
-      setUser((prev) => ({ ...prev, avatar: data.url } as TUser));
+      setUser((prev) => ({ ...prev, avatar: data.url }) as TUser);
       openButtonRef.current?.click();
     },
     onError: (error) => {
@@ -70,7 +70,7 @@ function Avatar() {
       const megabytes =
         fileConfig.avatarSizeLimit != null ? formatBytes(fileConfig.avatarSizeLimit) : 2;
       showToast({
-        message: localize('com_ui_upload_invalid_var', megabytes + ''),
+        message: localize('com_ui_upload_invalid_var', { 0: megabytes + '' }),
         status: 'error',
       });
     }
@@ -133,9 +133,11 @@ function Avatar() {
     >
       <div className="flex items-center justify-between">
         <span>{localize('com_nav_profile_picture')}</span>
-        <OGDialogTrigger ref={openButtonRef} className="btn btn-neutral relative">
-          <FileImage className="mr-2 flex w-[22px] items-center stroke-1" />
-          <span>{localize('com_nav_change_picture')}</span>
+        <OGDialogTrigger ref={openButtonRef}>
+          <Button variant="outline">
+            <FileImage className="mr-2 flex w-[22px] items-center stroke-1" />
+            <span>{localize('com_nav_change_picture')}</span>
+          </Button>
         </OGDialogTrigger>
       </div>
 

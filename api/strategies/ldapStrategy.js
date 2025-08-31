@@ -1,10 +1,10 @@
 const fs = require('fs');
+const { isEnabled } = require('@librechat/api');
 const LdapStrategy = require('passport-ldapauth');
-const { SystemRoles } = require('librechat-data-provider');
-const { findUser, createUser, updateUser } = require('~/models/userMethods');
-const { countUsers } = require('~/models/userMethods');
-const { isEnabled } = require('~/server/utils');
-const logger = require('~/utils/logger');
+const { logger } = require('@librechat/data-schemas');
+const { SystemRoles, ErrorTypes } = require('librechat-data-provider');
+const { createUser, findUser, updateUser, countUsers } = require('~/models');
+const { getBalanceConfig } = require('~/server/services/Config');
 
 const {
   LDAP_URL,
@@ -18,11 +18,12 @@ const {
   LDAP_USERNAME,
   LDAP_EMAIL,
   LDAP_TLS_REJECT_UNAUTHORIZED,
+  LDAP_STARTTLS,
 } = process.env;
 
 // Check required environment variables
 if (!LDAP_URL || !LDAP_USER_SEARCH_BASE) {
-  return null;
+  module.exports = null;
 }
 
 const searchAttributes = [
@@ -50,6 +51,7 @@ if (LDAP_EMAIL) {
   searchAttributes.push(LDAP_EMAIL);
 }
 const rejectUnauthorized = isEnabled(LDAP_TLS_REJECT_UNAUTHORIZED);
+const startTLS = isEnabled(LDAP_STARTTLS);
 
 const ldapOptions = {
   server: {
@@ -72,6 +74,7 @@ const ldapOptions = {
         })(),
       },
     }),
+    ...(startTLS && { starttls: true }),
   },
   usernameField: 'email',
   passwordField: 'password',
@@ -87,6 +90,14 @@ const ldapLogin = new LdapStrategy(ldapOptions, async (userinfo, done) => {
       (LDAP_ID && userinfo[LDAP_ID]) || userinfo.uid || userinfo.sAMAccountName || userinfo.mail;
 
     let user = await findUser({ ldapId });
+    if (user && user.provider !== 'ldap') {
+      logger.info(
+        `[ldapStrategy] User ${user.email} already exists with provider ${user.provider}`,
+      );
+      return done(null, false, {
+        message: ErrorTypes.AUTH_FAILED,
+      });
+    }
 
     const fullNameAttributes = LDAP_FULL_NAME && LDAP_FULL_NAME.split(',');
     const fullName =
@@ -121,7 +132,8 @@ const ldapLogin = new LdapStrategy(ldapOptions, async (userinfo, done) => {
         name: fullName,
         role: isFirstRegisteredUser ? SystemRoles.ADMIN : SystemRoles.USER,
       };
-      const userId = await createUser(user);
+      const balanceConfig = await getBalanceConfig();
+      const userId = await createUser(user, balanceConfig);
       user._id = userId;
     } else {
       // Users registered in LDAP are assumed to have their user information managed in LDAP,
