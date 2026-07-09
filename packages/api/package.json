@@ -81,7 +81,7 @@
     "librechat-data-provider": "*",
     "node-fetch": "2.7.0",
     "tiktoken": "^1.0.15",
-    "undici": "^7.10.0",
+    "undici": "^7.28.0",
     "zod": "^3.22.4"
   }
 }
